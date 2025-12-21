@@ -11,10 +11,6 @@ from xml.etree import ElementTree        # XML/SVG の DOM 解析
 import logging                           # ログ
 import asyncio                           # 非同期処理
 from enum import Enum                    # 列挙型
-from typing import(
-    Optional,                            # 型ヒント
-    List                                 # リスト
-)
 
 # ============================
 # サードパーティライブラリ
@@ -40,7 +36,6 @@ from shapely.geometry import (            # 形状処理（点・多角形）
     Polygon
 )
 from shapely.ops import unary_union       # ジオメトリ結合
-from IPython.display import SVG, display  # SVGを表示する
 from fastapi import(                      # FastAPI
     FastAPI,
     Request,
