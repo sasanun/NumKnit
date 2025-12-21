@@ -25,6 +25,7 @@ from pydantic_core import(                # Pydantic の検証エラー
 )
 from svgpathtools import (                # SVG パス解析ツール
     parse_path,
+    wsvg,
     Path,
     Line,
     CubicBezier,
@@ -53,14 +54,12 @@ logging.basicConfig(
     )
 
 logger = logging.getLogger()
-logger.setLevel(logging.DEBUG) # TODO 後でメイン関数に移すよ
+logger.setLevel(logging.DEBUG)
 
 # FastAPI の初期化
 app = FastAPI(title="Sweater Chart Generator")
 
-# SVGを描画する際のパラメータ
-fill, stroke, stroke_width = "white", "black", 1
-
+# 編み目記号のEnum
 class Symbol(Enum):
     # 名前 = (番号, 記号)
     NONE     = (0, "#")
@@ -83,7 +82,7 @@ class Symbol(Enum):
         return cls.NONE
 
 # セーターの形状のEnum
-class BodyShapeType(str, Enum):
+class BodyType(str, Enum):
     STANDARD = "standard"
     # CARDIGAN = "cardigan"
     # VEST = "vest"
@@ -126,7 +125,7 @@ class SweaterDimensions(BaseModel):
     width_of_sleeve: float = Field(..., description="袖幅", gt=0)
     width_of_cuff: float = Field(..., description="袖口幅", gt=0)
 
-    body_shape_type: BodyShapeType = Field(..., description="身頃の形状")
+    body_shape_type: BodyType = Field(..., description="身頃の形状")
     neck_shape_type: NeckType = Field(..., description="襟の形状")
     shoulder_shape_type: ShoulderType = Field(..., description="肩の形状")
 
@@ -316,11 +315,19 @@ class Shape:
         self._stitch_length = stitch_length
 
     def __getattr__(self, name):
-        # クラスにないものはnp.ndarrayに投げる
-        return getattr(self.drawing, name)
+        # クラスにないものは Path に投げる
+        return getattr(self.path, name)
 
     @classmethod
-    def body_from(cls, data, is_front:bool) -> 'Shape':
+    def front_body_from(cls, data: SweaterDimensions) -> 'Shape':
+        return cls._body_from(data, is_front=True)
+    
+    @classmethod
+    def back_body_from(cls, data: SweaterDimensions) -> 'Shape':
+        return cls._body_from(data, is_front=False)
+
+    @classmethod
+    def _body_from(cls, data, is_front:bool) -> 'Shape':
         """
         身頃の Shape を生成する
 
@@ -442,6 +449,10 @@ class Shape:
     @property
     def stitch_length(self):
         return self._stitch_length
+    
+    def write_svg(self, filename: str, **kwargs):
+        wsvg(self.paths, filename=filename, **kwargs)
+
 
 # チャート（編み図）
 class Chart:
@@ -738,7 +749,7 @@ def cleanup_file(file_path: str):
             os.remove(file_path)
     return _cleanup
     
-    if data.body_shape_type is BodyShapeType.STANDARD:
+    if data.body_shape_type is BodyType.STANDARD:
         front_body_shape = generate_shape_of_sweater_body(data)
 
     def __call__(self):
@@ -761,8 +772,8 @@ def generate_file(data: SweaterDimensions) -> str:
     
     """
     # TODO メイン処理
-    front_body_shape = Shape.body_from(data, is_front=True)
-    back_body_shape = Shape.body_from(data, is_front=False)
+    front_body_shape = Shape.front_body_from(data)
+    back_body_shape = Shape.back_body_from(data)
     sleeve_shape = Shape.sleeve_from(data)
 
     front_body_chart = Chart.from_shape(front_body_shape)
