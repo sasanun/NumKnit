@@ -26,6 +26,7 @@ from pydantic_core import(                # Pydantic の検証エラー
 from svgpathtools import (                # SVG パス解析ツール
     parse_path,
     wsvg,
+    disvg,
     Path,
     Line,
     CubicBezier,
@@ -119,6 +120,7 @@ class SweaterDimensions(BaseModel):
 
     width_of_body: float = Field(..., description="身幅", gt=0)
     width_of_neck: float = Field(..., description="襟ぐり幅", gt=0)
+
     length_of_sleeve: float = Field(..., description="袖丈", gt=0)
     length_of_ribbed_cuff: float = Field(..., description="袖口ゴム編み", gt=0)
 
@@ -217,8 +219,110 @@ class SweaterDimensions(BaseModel):
     @computed_field
     @property
     def length_of_sleeve_side(self) -> float:
-        """ 袖下(mm)　袖丈から袖山の高さ・袖口のゴム編みを引いた長さ"""
+        """ 袖下(mm) 袖丈から袖山の高さ・袖口のゴム編みを引いた長さ"""
         return self.length_of_sleeve - self.length_of_sleeve_cap - self.length_of_ribbed_cuff
+    
+    @computed_field
+    @property
+    def rows_of_body(self) -> int:
+        """ 着丈の段数"""
+        return int(self.length_of_body / self.stitch_length)
+    
+    @computed_field
+    @property
+    def rows_of_shoulder_drop(self) -> int:
+        """ 肩下がりの段数"""
+        return int(self.length_of_shoulder_drop / self.stitch_length)
+    
+    @computed_field
+    @property
+    def rows_of_ribbed_hem(self) -> int:
+        """ 裾のゴム編みの段数"""
+        return int(self.length_of_ribbed_hem / self.stitch_length)
+    
+    @computed_field
+    @property
+    def rows_of_front_neck_drop(self) -> int:
+        """ 前襟ぐり下がりの段数"""
+        return int(self.length_of_front_neck_drop / self.stitch_length)
+    
+    @computed_field
+    @property
+    def rows_of_back_neck_drop(self) -> int:
+        """ 後襟ぐり下がりの段数"""
+        return int(self.length_of_back_neck_drop / self.stitch_length)
+    
+    @computed_field
+    @property
+    def cols_of_body(self) -> int:
+        """ 身幅の目数"""
+        return int(self.width_of_body / self.stitch_width)
+    
+    @computed_field
+    @property
+    def cols_of_neck(self) -> int:
+        """ 襟ぐり幅の目数"""
+        return int(self.width_of_neck / self.stitch_width)
+    
+    @computed_field
+    @property
+    def rows_of_sleeve(self) -> int:
+        """ 袖丈の段数"""
+        return int(self.length_of_sleeve / self.stitch_length)
+    
+    @computed_field
+    @property
+    def rows_of_ribbed_cuff(self) -> int:
+        """ 袖口のゴム編みの段数"""
+        return int(self.length_of_ribbed_cuff / self.stitch_length)
+    
+    @computed_field
+    @property
+    def cols_of_sleeve(self) -> int:
+        """ 袖幅の目数"""
+        return int(self.width_of_sleeve / self.stitch_width)
+    
+    @computed_field
+    @property
+    def cols_of_cuff(self) -> int:
+        """ 袖口幅の目数"""
+        return int(self.width_of_cuff / self.stitch_width)
+    
+    @computed_field
+    @property
+    def rows_of_body_side(self) -> int:
+        """ 脇下から裾のゴム編みの上端までの段数"""
+        return int(self.length_of_body_side / self.stitch_length)
+    
+    @computed_field
+    @property
+    def rows_of_vertical_armhole(self) -> int:
+        """ 袖ぐりの垂直方向の段数"""
+        return int(self.length_of_vertical_armhole / self.stitch_length)
+    
+    @computed_field
+    @property
+    def cols_of_horizontal_armhole(self) -> int:
+        """ 袖ぐりの水平方向の目数"""
+        return int(self.width_of_horizontal_armhole / self.stitch_width)
+    
+    @computed_field
+    @property
+    def cols_of_shoulder(self) -> int:
+        """ 肩幅の目数"""
+        return int(self.width_of_shoulder / self.stitch_width)
+    
+    @computed_field
+    @property
+    def rows_of_sleeve_side(self) -> int:
+        """ 袖下から袖山の高さまでの段数"""
+        return int(self.length_of_sleeve_side / self.stitch_length)
+    
+    @computed_field
+    @property
+    def rows_of_sleeve_cap(self) -> int:
+        """ 袖山の段数"""
+        return int(self.length_of_sleeve_cap / self.stitch_length)
 
     def _round_to_multiple_stitch_length(self, value) -> float:
         """ 寸法を stitch_length の整数倍に丸める"""
@@ -451,7 +555,7 @@ class Shape:
         return self._stitch_length
     
     def write_svg(self, filename: str, **kwargs):
-        wsvg(self.paths, filename=filename, **kwargs)
+        wsvg(self.path, filename=filename, **kwargs)
 
 
 # チャート（編み図）
@@ -485,10 +589,11 @@ class Chart:
         Returns:
             np.ndarray: チャートの二次元配列
         """
-        logger.debug(f"_convert_shape_to_chart() is called")
+
+        logger.debug(f"<<< Generating chart from shape >>>")
 
         # バウンドボックスのサイズを取得する
-        start_x, start_y, end_x, end_y = shape.path.bbox()
+        start_x, end_x, start_y,  end_y = shape.path.bbox()
         width = end_x - start_x
         height = end_y - start_y
 
@@ -496,78 +601,50 @@ class Chart:
         num_grid_width = int(width / shape.stitch_width)
         num_grid_height = int(height / (shape.stitch_length))
         num_grid_width_half = int(num_grid_width / 2) #対称軸の位置
-        logger.debug(f"number of grid: num_grid_width={num_grid_width} num_grid_height={num_grid_height} num_grid_width_half={num_grid_width_half}")
+
+        logger.debug(
+            f"array size:\n"
+            f"num_grid_width={num_grid_width}\n"
+            f"num_grid_height={num_grid_height}\n"
+            f"num_grid_width_half={num_grid_width_half}"
+        )
 
         # グリッドと同じ行列数の配列を生成
         result = np.zeros((num_grid_height, num_grid_width), dtype=np.int8)
         logger.debug(f"grid_array is created")
 
-        # Pathからd要素を取得してポリゴンに変換
-        svg_str = shape.path.d()
-        root = ElementTree.fromstring(svg_str)
-        namespaces = {'svg': 'http://www.w3.org/2000/svg'}
-        polygons = []
-
         # パス要素からポリゴンを生成
-        path_elements = root.findall('.//svg:path', namespaces)
-        for i, path_element in enumerate(path_elements):
-            try:
-                path_d = path_element.attrib['d']
-                path = parse_path(path_d)
-                polygon_points = []
-            except Exception as e:
-                logger.warning(f"Could not parse path at index {i} due to {e}")
-                continue
-
-            # パスを線分に分割して点を取得
-            num_samples = 100 # サンプリング数を増やすことでより正確なポリゴン化を行う
-            for segment in path:
-                if isinstance(segment, (Line, CubicBezier, QuadraticBezier)):
-                    for i in range(num_samples + 1):
-                        t = i / num_samples
-                        p = segment.point(t)
-                        polygon_points.append((p.real, p.imag))
-                else: pass
-            # 閉じたパスの場合のみポリゴンとして追加
-            if path.isclosed() and len(polygon_points) >= 3:
-                try:
-                    # TopologyException を回避するための裏技
-                    polygons.append(Polygon(polygon_points).buffer(0))
-                except Exception as e:
-                    logger.warning(f"Could not buffer polygon at index {i} due to {e}")
+        polygon = None
+        polygon_points = [] # パスを線分に分割して点を取得
+        num_samples = 100 # サンプリング数
+        for segment in shape.path:
+            if isinstance(segment, (Line, CubicBezier, QuadraticBezier)):
+                for i in range(num_samples + 1):
+                    t = i / num_samples
+                    p = segment.point(t)
+                    polygon_points.append((p.real, p.imag))
             else: pass
-
-
-        # 長方形要素からポリゴンを生成
-        rect_elements = root.findall('.//svg:rect', namespaces)
-        for i, rect_element in enumerate(rect_elements):
+        # 閉じたパスの場合のみポリゴンとして追加
+        if shape.path.isclosed() and len(polygon_points) >= 3:
             try:
-                x = float(rect_element.attrib.get('x', 0))
-                y = float(rect_element.attrib.get('y', 0))
-                w = float(rect_element.attrib['width'])
-                h = float(rect_element.attrib['height'])
-                polygon = Polygon([(x, y), (x + w, y), (x + w, y + h), (x, y + h)])
-                polygons.append(polygon)
+                # TopologyException を回避するための裏技
+                polygon = Polygon(polygon_points).buffer(0)
             except Exception as e:
-                logger.warning(f"Could not parse rect element at index[{i}] due to {e}")
-                continue
+                logger.warning(f"Could not create polygon from path due to {e}")
+        else: pass
 
-        if not polygons:
+        if not polygon:
             # 形状が一つも抽出されなかった場合
-            logger.warning(f"No polygons found in SVG")
+            logger.warning(f"No polygon could be created from the shape path. Returning empty chart.")
             return Chart(result, shape.stitch_width, shape.stitch_length)
-        else:
-            # 抽出した全てのポリゴンを結合
-            combined_shape = unary_union(polygons)
-            logger.debug(f"combined_shape is created from {len(polygons)} polygons")
-
+        
         # 1目の縦横の長さに対応したグリッドの中心が内側かどうかは判定する
         for y_index, y_coordinate in enumerate(np.arange(0, height, shape.stitch_length)):
             for x_index, x_coordinate in enumerate(np.arange(0, width, shape.stitch_width)):
                 # 判定点
                 point = Point(float(x_coordinate + shape.stitch_width / 2), float(y_coordinate + shape.stitch_length / 2))
                 # 右側の判定点が結合された形状の内部にあるか判定
-                if combined_shape.contains(point):
+                if polygon.contains(point):
                     # 内部にある場合、グリッドを描画
                     result[y_index, x_index] = Symbol.KNIT.number
 
@@ -583,29 +660,43 @@ class Chart:
         return self._stitch_length
 
     def chunk_rows_by_two(self) -> np.ndarray:
+        """
+        Symbol.KNIT のグリッドが階段になっている位置を最下段から数えた行数で
+        1. 左半分では偶数段
+        2. 右半分では奇数段
+        に調整する
+        """
         result = self.array.copy()
         rows, cols = self.array.shape
         mid = cols // 2
+
+        # 行数が偶数か奇数か
+        offset = 0 # 行数が偶数の場合
+        if rows % 2 != 0:
+            offset = 1 # 行数が奇数の場合
         
         # --- 左半分: 1-2行目, 3-4行目... でペア ---
         # 上側(above): 0, 2, 4... 行目
         # 下側(below): 1, 3, 5... 行目
-        left_above = result[0:rows-1:2, :mid]
-        left_below = self.array[1:rows:2, :mid]
-        left_above[left_below == Symbol.KNIT] = Symbol.KNIT
+        above = result[offset:rows-1:2, :mid]
+        below = self.array[1+offset:rows:2, :mid]
+        above[below == Symbol.KNIT.number] = Symbol.KNIT.number
 
         # --- 右半分: 2-3行目, 4-5行目... でペア ---
         # 上側(above): 1, 3, 5... 行目
         # 下側(below): 2, 4, 6... 行目
         # ※奇数列対応のため、開始位置を mid からにする
-        right_above = result[1:rows-1:2, mid:]
-        right_below = self.array[2:rows:2, mid:]
-        right_above[right_below == Symbol.KNIT] = Symbol.KNIT
+        above = result[1-offset:rows-1:2, mid:]
+        below = self.array[2-offset:rows:2, mid:]
+        above[below == Symbol.KNIT.number] = Symbol.KNIT.number
 
         self.array = result
         return result
 
     def insert_none_row_to_top(self):
+        """
+        配列の先頭に Symbol.NONE の行を挿入する
+        """
         result = self.array.copy()
         result = np.insert(result, 0, Symbol.NONE.number, axis=0)
         self.array = result
@@ -613,7 +704,7 @@ class Chart:
 
     def insert_rib_below(self, start_row: int) -> np.ndarray:
         """
-        start_row より下の行においてゴム編み(表編みと裏編みの交互)を挿入する
+        start_row より下の行にゴム編み(表編みと裏編みの交互)を挿入する
         """
         result = self.array.copy()
         
@@ -621,7 +712,7 @@ class Chart:
         target_area = result[start_row + 1:, 1::2]
         
         # target の場所を replacement に書き換え
-        target_area[target_area == Symbol.KNIT] = Symbol.PURL
+        target_area[target_area == Symbol.KNIT.number] = Symbol.PURL.number
         
         self.array = result
         return result
@@ -640,35 +731,37 @@ class Chart:
         target_above = result[:-1]
         
         # 下のセルが Symbol.KNIT かつ上のセルが Symbol.NONE である
-        mask = (bottom == Symbol.KNIT) & (top == Symbol.NONE)
+        mask = (bottom == Symbol.KNIT.number) & (top == Symbol.NONE.number)
         
         # 書き換え
-        target_above[mask] = Symbol.CAST_OFF
+        target_above[mask] = Symbol.CAST_OFF.number
         
         self.array = result
 
         return result
 
-    def insert_k2tog_and_kks(self, target_side: Side, target, replacement) -> np.ndarray:
+    def insert_k2tog_and_kks(self) -> np.ndarray:
         """
-        左右に並んだペアのうち target_side だけが target である場合にその値を replacement に書き換える
+        左右に並んだペアのうち片側だけが Symbol.CAST_OFF である場合にその値を
+        1. Symbol.CAST_OFF　が右側なら、左側を Symbol.K2TOG に置換
+        2. Symbol.CAST_OFF　が左側なら、右側を Symbol.SSK に置換
+        で書き換える
         """
         result = self.array.copy()
-        cols = self.array[1]
         
         # 比較対象となる「左側の列集合」と「右側の列集合」を定義
         # 偶数番目の列 (0, 2, 4...) を左、奇数番目の列 (1, 3, 5...) を右とするペア
         left_cols = self.array[:, :-1]
         right_cols = self.array[:, 1:]
         
-        # 左が Symbol.KNIT かつ右が Symbol.NONE
-        mask = (left_cols == Symbol.KNIT) & (right_cols == Symbol.NONE)
-        result[:, :-1][mask] = Symbol.K2TOG
-    
-        # 右が Symbol.NONE かつ Symbol.KNIT
-        mask = (right_cols == Symbol.NONE) & (left_cols == Symbol.KNIT)
-        result[:, 1:][mask] = Symbol.SSK
-        
+        # 左が Symbol.KNIT かつ右が Symbol.CAST_OFF.number
+        mask = (left_cols == Symbol.KNIT.number) & (right_cols == Symbol.CAST_OFF.number)
+        result[:, :-1][mask] = Symbol.K2TOG.number
+
+        # 右が Symbol.CAST_OFF.number かつ Symbol.KNIT
+        mask = (right_cols == Symbol.NONE.number) & (left_cols == Symbol.CAST_OFF.number)
+        result[:, 1:][mask] = Symbol.SSK.number
+
         self.array = result
         return result
 
@@ -694,20 +787,55 @@ class Chart:
 
         # 左下だけが Symbol.KNIT なら右上をSymbol.K1Bに置換
         mask = (
-            (tl == Symbol.NONE) & (tr == Symbol.NONE) &
-            (bl == Symbol.KNIT) & (br == Symbol.NONE)
+            (tl == Symbol.NONE.number) & (tr == Symbol.NONE.number) &
+            (bl == Symbol.KNIT.number) & (br == Symbol.NONE.number)
         )
         res_tr[mask] = Symbol.K1B
 
         # 右下だけが Symbol.KNIT なら左上をSymbol.K1Bに置換
         mask = (
-            (tl == Symbol.NONE) & (tr == Symbol.NONE) &
-            (bl == Symbol.NONE) & (br == Symbol.KNIT)
+            (tl == Symbol.NONE.number) & (tr == Symbol.NONE.number) &
+            (bl == Symbol.NONE.number) & (br == Symbol.KNIT.number)
         )
-        res_tl[mask] = Symbol.K1B
+        res_tl[mask] = Symbol.K1B.number
 
         self.array = result
         return result
+    
+    def flip_horizontally(self, start_row: int, start_col: int, end_row: int, end_col: int) -> np.ndarray:
+        """ チャートの指定された部分を水平方向に反転する """
+        result = self.array.copy()
+        result[start_row:end_row, start_col:end_col] = np.fliplr(result[start_row:end_row, start_col:end_col])
+        self.array = result
+        return result
+    
+    def symmetrize_rows(self, side: Side, start_row: int = 0, end_row: int = None) -> np.ndarray: # type: ignore
+        """
+        チャートの指定された範囲の行を片側を基準にして左右対称にする
+        """
+        if end_row is None:
+            end_row = self.array.shape[0]
+
+        result = self.array.copy()    
+        if side == Side.LEFT:
+            # 左側を基準に右側を反転
+            center_col = self.array.shape[1] // 2
+            result[start_row:end_row, center_col:] = np.fliplr(result[start_row:end_row, center_col:])
+        elif side == Side.RIGHT:
+            # 右側を基準に左側を反転
+            center_col = self.array.shape[1] // 2
+            result[start_row:end_row, :center_col] = np.fliplr(result[start_row:end_row, :center_col])
+        self.array = result
+        return result
+
+    def write_csv(self, filename: str):
+        """ チャートをCSVファイルに書き出す """
+        np.savetxt(
+            filename,
+            self.array,
+            fmt='%d',
+            delimiter=','
+        )
     
     
 @app.post("/generate_sweater_chart", response_description="generated file")
