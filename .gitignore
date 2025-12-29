@@ -1,2 +1,3 @@
-../output/*
+/output/*
 sandbox.py
+__pycache__/*

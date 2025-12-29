@@ -4,6 +4,9 @@
 import os                                # 
 import tempfile                          # 一時ファイル
 import math                              # 数学関数
+from typing import (                     # 型定義
+    Tuple
+)
 import numpy as np                       # 数値処理
 from operator import index               # インデックス操作関連
 from xml.etree import ElementTree        # XML/SVG の DOM 解析
@@ -26,7 +29,6 @@ from pydantic_core import(                # Pydantic の検証エラー
 from svgpathtools import (                # SVG パス解析ツール
     parse_path,
     wsvg,
-    disvg,
     Path,
     Line,
     CubicBezier,
@@ -64,12 +66,23 @@ app = FastAPI(title="Sweater Chart Generator")
 class Symbol(Enum):
     # 名前 = (番号, 記号)
     NONE     = (0, "#")
+
     KNIT     = (1, "")
-    PURL     = (2, "-")
-    CAST_OFF = (3, "●")
-    K2TOG    = (4, "＼")
-    SSK      = (5, "／")
-    K1B      = (6, "∨")
+    PURL     = (-1, "-")
+    M1       = (2, "△")
+
+    K2TOG    = (11, "＼")
+    P2TOG    = (-11, "＼")
+
+    SSK      = (21, "／")
+    SSP      = (-21, "／")
+
+    CO       = (50, "▲")
+    BO       = (60, "●")
+    HOLD     = (70, "■")
+
+    _MARKER_1 = (-101, "")
+    _MARKER_2 = (-102, "")
 
     def __init__(self, number, char):
         self.number = number
@@ -659,172 +672,273 @@ class Chart:
     def stitch_length(self):
         return self._stitch_length
 
-    def chunk_rows_by_two(self) -> np.ndarray:
+    def _insert_symbol(self) -> np.ndarray:
         """
-        Symbol.KNIT のグリッドが階段になっている位置を最下段から数えた行数で
-        1. 左半分では偶数段
-        2. 右半分では奇数段
-        に調整する
+        1.伏止め・減らし目が適切な位置になるように、段の位置を
+            a. 右上がりの段は偶数行目にあらわれる
+            b. 左上がりの段は奇数行目にあらわれる
+        に再配置する
+        2.編み目記号を挿入する
+
+        Returns:
+            np.ndarray: 変換後の配列
         """
-        result = self.array.copy()
-        rows, cols = self.array.shape
-        mid = cols // 2
 
-        # 行数が偶数か奇数か
-        offset = 0 # 行数が偶数の場合
-        if rows % 2 != 0:
-            offset = 1 # 行数が奇数の場合
-        
-        # --- 左半分: 1-2行目, 3-4行目... でペア ---
-        # 上側(above): 0, 2, 4... 行目
-        # 下側(below): 1, 3, 5... 行目
-        above = result[offset:rows-1:2, :mid]
-        below = self.array[1+offset:rows:2, :mid]
-        above[below == Symbol.KNIT.number] = Symbol.KNIT.number
+        # === 1. 段の位置を調整する ===
 
-        # --- 右半分: 2-3行目, 4-5行目... でペア ---
-        # 上側(above): 1, 3, 5... 行目
-        # 下側(below): 2, 4, 6... 行目
-        # ※奇数列対応のため、開始位置を mid からにする
-        above = result[1-offset:rows-1:2, mid:]
-        below = self.array[2-offset:rows:2, mid:]
-        above[below == Symbol.KNIT.number] = Symbol.KNIT.number
+        # 1.1 開始行とステップ行数の設定
+        # 右上がりの段のマーカーは奇数行、左上がりの段のマーカーは偶数行に挿入する
+        odd_start_row, even_start_row = 0, 1 # 配列の行数が奇数の場合
+        if self.array.shape[0] % 2 == 0:
+            odd_start_row, even_start_row = 1, 0 # 配列の行数が偶数の場合
 
-        self.array = result
-        return result
+        step_rows = 2
 
-    def insert_none_row_to_top(self):
-        """
-        配列の先頭に Symbol.NONE の行を挿入する
-        """
-        result = self.array.copy()
-        result = np.insert(result, 0, Symbol.NONE.number, axis=0)
-        self.array = result
-        return result
-
-    def insert_rib_below(self, start_row: int) -> np.ndarray:
-        """
-        start_row より下の行にゴム編み(表編みと裏編みの交互)を挿入する
-        """
-        result = self.array.copy()
-        
-        # 指定行より下の行かつインデックスが1から1列おきのスライス
-        target_area = result[start_row + 1:, 1::2]
-        
-        # target の場所を replacement に書き換え
-        target_area[target_area == Symbol.KNIT.number] = Symbol.PURL.number
-        
-        self.array = result
-        return result
-
-    def insert_cast_off(self):
-        """
-        下のセルが Symbol.KNIT かつ上のセルが Symbol.NONE である場合に
-        上のセルを Symbol.CAST_OFF で書き換える
-        """
-        result = self.array.copy()
-        
-        bottom = self.array[1:]   # 下の行
-        top = self.array[:-1]  # 上の行
-        
-        # 書き換え対象
-        target_above = result[:-1]
-        
-        # 下のセルが Symbol.KNIT かつ上のセルが Symbol.NONE である
-        mask = (bottom == Symbol.KNIT.number) & (top == Symbol.NONE.number)
-        
-        # 書き換え
-        target_above[mask] = Symbol.CAST_OFF.number
-        
-        self.array = result
-
-        return result
-
-    def insert_k2tog_and_kks(self) -> np.ndarray:
-        """
-        左右に並んだペアのうち片側だけが Symbol.CAST_OFF である場合にその値を
-        1. Symbol.CAST_OFF　が右側なら、左側を Symbol.K2TOG に置換
-        2. Symbol.CAST_OFF　が左側なら、右側を Symbol.SSK に置換
-        で書き換える
-        """
-        result = self.array.copy()
-        
-        # 比較対象となる「左側の列集合」と「右側の列集合」を定義
-        # 偶数番目の列 (0, 2, 4...) を左、奇数番目の列 (1, 3, 5...) を右とするペア
-        left_cols = self.array[:, :-1]
-        right_cols = self.array[:, 1:]
-        
-        # 左が Symbol.KNIT かつ右が Symbol.CAST_OFF.number
-        mask = (left_cols == Symbol.KNIT.number) & (right_cols == Symbol.CAST_OFF.number)
-        result[:, :-1][mask] = Symbol.K2TOG.number
-
-        # 右が Symbol.CAST_OFF.number かつ Symbol.KNIT
-        mask = (right_cols == Symbol.NONE.number) & (left_cols == Symbol.CAST_OFF.number)
-        result[:, 1:][mask] = Symbol.SSK.number
-
-        self.array = result
-        return result
-
-    def insert_k1b(self) -> np.ndarray:
-        """
-        2x2のグリッドにおいて
-        - 左下だけが Symbol.KNIT なら、右上を Symbol.K1B に置換
-        - 右下だけが Symbol.KNIT なら、左上を Symbol.K1B に置換
-        """
-        result = self.array.copy()
-        rows, cols = self.array.shape
-
-        # 2x2ブロックを扱うため、行・列ともにステップ2でスライス
-        # [上段, 左側], [上段, 右側], [下段, 左側], [下段, 右側] のビューを作成
-        tl = self.array[:-1, :-1]
-        tr = self.array[:-1, 1:]
-        bl = self.array[1:,  :-1]
-        br = self.array[1:,   1:]
-
-        # 書き換え用のビュー
-        res_tl = result[:-1, :-1]
-        res_tr = result[:-1, 1:]
-
-        # 左下だけが Symbol.KNIT なら右上をSymbol.K1Bに置換
-        mask = (
-            (tl == Symbol.NONE.number) & (tr == Symbol.NONE.number) &
-            (bl == Symbol.KNIT.number) & (br == Symbol.NONE.number)
+        # 1.2 右上がりの段の上のグリッドにマーカーを挿入
+        self._replace_in(
+            target_array = np.array([
+                [Symbol.NONE.number, Symbol.NONE.number],
+                [Symbol.NONE.number, Symbol.KNIT.number]
+                ]),
+            replacement=Symbol._MARKER_1.number,
+            replacement_position=(0,1),
+            start_row=odd_start_row,
+            step_rows=step_rows
         )
-        res_tr[mask] = Symbol.K1B
 
-        # 右下だけが Symbol.KNIT なら左上をSymbol.K1Bに置換
-        mask = (
-            (tl == Symbol.NONE.number) & (tr == Symbol.NONE.number) &
-            (bl == Symbol.NONE.number) & (br == Symbol.KNIT.number)
+        # 1.3 左上がりの段の上のグリッドにマーカーを挿入
+        self._replace_in(
+            target_array = np.array([
+                [Symbol.NONE.number, Symbol.NONE.number],
+                [Symbol.KNIT.number, Symbol.NONE.number]
+                ]),
+            replacement=Symbol._MARKER_2.number,
+            replacement_position=(0,0),
+            start_row=even_start_row,
+            step_rows=step_rows
         )
-        res_tl[mask] = Symbol.K1B.number
 
+        # 1.4 マーカーを水平方向のSymbol.NONEに伝播させ、Symbol.NONEがなくなるまで繰り返し、最後にマーカーをSymbol.KNITに置換
+        while True:
+            # 変化前の配列
+            prev_array = self.array.copy()
+
+            # Symbol._MARKER_1の右にあるSymbol.NONEを見つけて置換
+            self._replace_in(
+                target_array=np.array([
+                    [Symbol._MARKER_1.number, Symbol.NONE.number]
+                    ]),
+                replacement=Symbol._MARKER_1.number,
+                replacement_position=(0,1)
+                )
+
+            # Symbol._MARKER_2の左にあるSymbol.NONEを見つけて置換
+            self._replace_in(
+                target_array=np.array([
+                    [Symbol.NONE.number, Symbol._MARKER_2.number]
+                    ]),
+                replacement=Symbol._MARKER_2.number,
+                replacement_position=(0,0)
+                )
+            
+            # 変化がなければ終了
+            if np.array_equal(prev_array, self.array):
+                # マーカーを Symbol.KNIT.number に置換
+                self.array[self.array == Symbol._MARKER_1.number] = Symbol.KNIT.number
+                self.array[self.array == Symbol._MARKER_2.number] = Symbol.KNIT.number
+                break
+
+        # ===== 2.編み目記号を挿入する =====
+
+        # 2.1 最上行にSymbol.NONEの行を追加
+        self.insert_row_to_top(fill=Symbol.NONE.number)
+
+        # 2.2 伏止記号の挿入
+        self._replace_in(
+            target_array = np.array([
+                [Symbol.NONE.number],
+                [Symbol.KNIT.number]
+                ]),
+            replacement=Symbol.BO.number,
+            replacement_position=(0,0)
+        )
+
+        # 2.3 右上2目1度記号の挿入
+        self._replace_in(
+            target_array = np.array([
+                [Symbol.KNIT.number, Symbol.BO.number]
+                ]),
+            replacement=Symbol.K2TOG.number,
+            replacement_position=(0,1)
+        )
+
+        # 2.4 左上2目1度記号の挿入
+        self._replace_in(
+            target_array = np.array([
+                [Symbol.BO.number, Symbol.KNIT.number]
+                ]),
+            replacement=Symbol.SSK.number,
+            replacement_position=(0,0)
+        )
+
+        # 2.5 増目記号の挿入
+        self._replace_in(
+            target_array = np.array([
+                [Symbol.KNIT.number, Symbol.KNIT.number],
+                [Symbol.KNIT.number, Symbol.NONE.number]
+                ]),
+            replacement=Symbol.M1.number,
+            replacement_position=(0,0)
+        )
+        self._replace_in(
+            target_array = np.array([
+                [Symbol.KNIT.number, Symbol.KNIT.number],
+                [Symbol.NONE.number, Symbol.KNIT.number]
+                ]),
+            replacement=Symbol.M1.number,
+            replacement_position=(0,1)
+        )
+
+        return self.array
+
+    def _replace_in(self, 
+                target_array: np.ndarray, 
+                replacement: int, 
+                replacement_position: Tuple[int, int],
+                start_row: int = 0,
+                step_rows: int = 1) -> np.ndarray:
+        """
+        指定した行範囲・ステップで target_array に一致するパターンを検索し、
+        特定の1点 (replacement_position) を置換する。
+        """
+        rows, cols = target_array.shape
+        r_y, r_x = replacement_position
+        
+        arr = self.array
+        h, w = arr.shape
+        
+        # --- 1. 判定範囲の決定 ---
+        # 判定を開始できる最終行のインデックス
+        last_possible_row = h - rows
+        
+        # start_row から last_possible_row までの範囲で step_rows ごとにインデックスを作成
+        if start_row > last_possible_row:
+            return arr # 判定不能な場合はそのまま返す
+            
+        row_indices = np.arange(start_row, last_possible_row + 1, step_rows)
+        
+        # --- 2. マスクの作成 ---
+        # マスクの形状は (選択された行数, w - cols + 1)
+        mask_h = len(row_indices)
+        mask_w = w - cols + 1
+        final_mask = np.ones((mask_h, mask_w), dtype=bool)
+        
+        for y in range(rows):
+            for x in range(cols):
+                # 行方向は row_indices を起点に y ずらした位置を参照
+                # 列方向は 0 から (w - cols + x + 1) まで
+                # np.ix_ を使うと不連続なインデックス（step）での抽出がスムーズです
+                selected_rows = row_indices + y
+                slice_part = arr[selected_rows[:, None], np.arange(x, w - cols + x + 1)]
+                
+                final_mask &= (slice_part == target_array[y, x])
+        
+        # --- 3. 置換の実行 ---
+        result = arr.copy()
+        
+        # 置換対象の y 座標を計算 (各判定開始行 + replacement_positionのy)
+        replace_y_indices = row_indices + r_y
+        # 置換対象の x 座標の範囲
+        replace_x_start = r_x
+        replace_x_end = w - cols + r_x + 1
+        
+        # mask が True の場所だけ replacement を代入
+        rows_to_change, cols_to_change = np.where(final_mask)
+        
+        actual_y = replace_y_indices[rows_to_change]
+        actual_x = replace_x_start + cols_to_change
+        
+        result[actual_y, actual_x] = replacement
+        
         self.array = result
         return result
     
-    def flip_horizontally(self, start_row: int, start_col: int, end_row: int, end_col: int) -> np.ndarray:
-        """ チャートの指定された部分を水平方向に反転する """
+    def insert_row_to_top(self, fill: int) -> np.ndarray:
+        """
+        配列の先頭に fill の行を挿入する
+        """
         result = self.array.copy()
-        result[start_row:end_row, start_col:end_col] = np.fliplr(result[start_row:end_row, start_col:end_col])
+        result = np.insert(result, 0, fill, axis=0)
         self.array = result
         return result
     
-    def symmetrize_rows(self, side: Side, start_row: int = 0, end_row: int = None) -> np.ndarray: # type: ignore
+    def insert_pattern_repeatedly(
+        self, 
+        pattern: np.ndarray, 
+        start_row: int = 0, 
+        end_row: int = None, # type: ignore
+        start_col: int = 0, 
+        end_col: int = None # type: ignore
+    ):
+        """
+        指定された矩形範囲に、patternを繰り返し挿入する
+        """
+        # 範囲の終点が未指定の場合は、グリッドの端までとする
+        if end_row is None:
+            end_row = self.array.shape[0]
+        if end_col is None:
+            end_col = self.array.shape[1]
+
+        # 挿入する領域のサイズを計算
+        target_h = end_row - start_row
+        target_w = end_col - start_col
+
+        # 負の範囲やゼロサイズの場合は何もしない
+        if target_h <= 0 or target_w <= 0:
+            return
+
+        # 1. 繰り返し回数を計算 (パターンのサイズで領域を割る)
+        reps_y = int(np.ceil(target_h / pattern.shape[0]))
+        reps_x = int(np.ceil(target_w / pattern.shape[1]))
+
+        # 2. タイル状に並べて、ターゲットのサイズに正確に切り抜く
+        # np.tile は (縦の反復数, 横の反復数) を受け取る
+        tiled = np.tile(pattern, (reps_y, reps_x))
+        final_patch = tiled[:target_h, :target_w]
+
+        # 3. 指定された矩形範囲を上書き
+        result = self.array.copy()
+        result[start_row:end_row, start_col:end_col] = final_patch
+
+        self.array = result
+        return result
+        
+    def symmetrize_rows(self, start_row: int = 0, end_row: int = None, based_on_right: bool = False) -> np.ndarray: # type: ignore
         """
         チャートの指定された範囲の行を片側を基準にして左右対称にする
         """
         if end_row is None:
             end_row = self.array.shape[0]
 
-        result = self.array.copy()    
-        if side == Side.LEFT:
-            # 左側を基準に右側を反転
-            center_col = self.array.shape[1] // 2
-            result[start_row:end_row, center_col:] = np.fliplr(result[start_row:end_row, center_col:])
-        elif side == Side.RIGHT:
+        print(self.array.shape)
+
+        result = self.array.copy()
+
+        # 列数が偶数か奇数かで中心列の位置が変わる
+        if self.array.shape[1] % 2 == 0:
+            center_col_end = self.array.shape[1] // 2
+            center_col_start = center_col_end
+        else:
+            center_col_end = self.array.shape[1] // 2
+            center_col_start = center_col_end + 1
+
+        if based_on_right:
             # 右側を基準に左側を反転
-            center_col = self.array.shape[1] // 2
-            result[start_row:end_row, :center_col] = np.fliplr(result[start_row:end_row, :center_col])
+            result[start_row:end_row, center_col_start:] = result[start_row:end_row, :center_col_end][:, ::-1]
+        else:
+            # 左側を基準に右側を反転
+            result[start_row:end_row, :center_col_end] = result[start_row:end_row, center_col_start:][:, ::-1]
+
         self.array = result
         return result
 
