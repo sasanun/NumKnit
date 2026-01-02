@@ -5,12 +5,13 @@ from main import (
     SweaterType,
     Shape,
     Chart,
+    XLSX
 )
 
 import numpy as np
 
 data = SweaterDimensions(
-    gauge=Gauge(metric=Metric.CM, vertical=24.5, horizontal=18.5),
+    gauge=Gauge(metric=Metric.MM, vertical=24.5, horizontal=18.5),
 
     length_of_body=530, # 着丈
     length_of_shoulder_drop= 20, # 肩下がり
@@ -68,3 +69,5 @@ charts = {
 for name, chart in charts.items():
     # チャートをCSVファイルとして書き出す
     chart.write_csv(filename=f"output/{name}.csv")
+
+XLSX.from_charts(charts).save(filename="output/output.xlsx")

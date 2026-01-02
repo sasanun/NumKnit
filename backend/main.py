@@ -3,7 +3,6 @@
 # ============================
 import os                                # 
 import tempfile                          # 一時ファイル
-import math                              # 数学関数
 from typing import (                     # 型定義
     Tuple
 )
@@ -51,6 +50,7 @@ from fastapi.responses import(
     JSONResponse,
 )
 import openpyxl
+from openpyxl.worksheet.datavalidation import DataValidation
 
 # ロガーの初期化
 logging.basicConfig(
@@ -118,29 +118,29 @@ class SweaterType(str, Enum):
 
 class Metric(str, Enum):
     INCH = "inch"
-    CM = "cm"
+    MM = "mm"
 
 class Gauge(BaseModel):
     """ ゲージの幅と高さを表現するクラス """
-    metric: Metric = Field(default=Metric.CM, description="寸法の単位")
+    metric: Metric = Field(default=Metric.MM, description="寸法の単位")
     vertical: float = Field(..., description="ゲージの段数", gt=0)
     horizontal: float = Field(..., description="ゲージの目数", gt=0)
     @computed_field
     @property
-    def stitch_width(self):
+    def stitch_width(self) -> float:
         if self.metric == Metric.INCH:
-            return 10.16 / self.horizontal
-        elif self.metric == Metric.CM:
-            return 10 / self.horizontal
+            return 101.6 / self.horizontal
+        elif self.metric == Metric.MM:
+            return 100 / self.horizontal
         return 0
     
     @computed_field
     @property
-    def stitch_length(self):
+    def stitch_length(self) -> float:
         if self.metric == Metric.INCH:
-            return 10.16 / self.vertical
-        elif self.metric == Metric.CM:
-            return 10 / self.vertical
+            return 101.6 / self.vertical
+        elif self.metric == Metric.MM:
+            return 100/ self.vertical
         return 0
  
 
@@ -148,6 +148,20 @@ class Gauge(BaseModel):
 class SweaterDimensions(BaseModel):
     """
     長袖のセーターの寸法とゲージを定義するデータモデル
+
+    Args:
+        gauge (Gauge): ゲージ
+        length_of_body (float): 着丈
+        length_of_shoulder_drop (float): 肩下がり
+        length_of_ribbed_hem (float): 裾のゴム編み
+        length_of_front_neck_drop (float): 前襟ぐり下がり
+        length_of_back_neck_drop (float): 後ろ襟ぐり下がり
+        width_of_body (float): 身幅
+        width_of_neck (float): 襟ぐり幅
+        length_of_sleeve (float): 袖丈
+        length_of_ribbed_cuff (float): 袖口のゴム編み
+        width_of_sleeve (float): 袖幅
+        width_of_cuff (float): 袖口幅
     """
     gauge: Gauge = Field(..., description="ゲージ")
 
@@ -614,13 +628,11 @@ class Chart:
         # グリッドの縦横の数を計算する
         num_grid_width = int(width / shape.gauge.stitch_width)
         num_grid_height = int(height / (shape.gauge.stitch_length))
-        num_grid_width_half = int(num_grid_width / 2) #対称軸の位置
 
         logger.debug(
             f"array size:\n"
             f"num_grid_width={num_grid_width}\n"
             f"num_grid_height={num_grid_height}\n"
-            f"num_grid_width_half={num_grid_width_half}"
         )
 
         # グリッドと同じ行列数の配列を生成
@@ -660,7 +672,8 @@ class Chart:
                 # 右側の判定点が結合された形状の内部にあるか判定
                 if polygon.contains(point):
                     # 内部にある場合、グリッドを描画
-                    array[y_index, x_index] = Symbol.KNIT.number
+                    if x_index < num_grid_width and y_index < num_grid_height:
+                        array[y_index, x_index] = Symbol.KNIT.number
 
         result = cls(array, shape.gauge)
         result._insert_symbol()
@@ -947,7 +960,6 @@ class Chart:
             delimiter=','
         )
 
-
 class XLSX():
     def __init__(self, xlsx: openpyxl.Workbook):
         self._xlsx = xlsx
@@ -966,23 +978,35 @@ class XLSX():
         # 先頭のチャートからゲージを取得
         gauge = charts[keys[0]].gauge
 
-        wb = openpyxl.Workbook()
+        gauge_info = [
+            ["metric", gauge.metric.name],
+            ["gauge of vertical", gauge.vertical],
+            ["horizontal", gauge.horizontal]
+        ]
+
+        wb = openpyxl.load_workbook("template.xlsx")
         ws = wb.active
         if ws is None:
             raise ValueError
         ws.title = "info"
 
+        # 先頭2列を固定列にする
+        num_frozen_cols = 2
+
         for i in range(num_charts):
             chart = charts[keys[i]]
             ws = wb.create_sheet(keys[i])
-            for row in range(chart.array.shape[0]):
-                for col in range(chart.array.shape[1]):
-                    ws.cell(row=row+1, column=col+1).value = chart.array[row, col]
+            for i, row in enumerate(range(chart.array.shape[0])):
+                for j, col in enumerate(range(num_frozen_cols,chart.array.shape[1] + num_frozen_cols)):
+                    ws.cell(row=row+1, column=col+1).value = chart.array[i, j]
 
         if wb is None:
             raise ValueError
         else:
             return cls(wb)
+        
+    def save(self, filename: str):
+        return self._xlsx.save(filename)
         
 
     
