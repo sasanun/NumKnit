@@ -1,5 +1,26 @@
 import 'package:flutter/material.dart';
 
+class AppColors {
+  // ブランドカラー
+  static const Color primary = Colors.teal;
+  static final Color primaryLight = Colors.teal.shade50;
+  static final Color primaryDark = Colors.teal.shade700;
+  static const Color accent = Color(0xFF00BFA5);
+  
+  // 背景・カード
+  static final Color cardBorder = Colors.grey.shade300;
+  static const Color cardBg = Colors.white;
+  static final Color scaffoldBg = Colors.grey.shade50;
+  
+  // 機能色
+  static const Color pdf = Color(0xFFD32F2F);
+  static const Color excel = Color(0xFF388E3C);
+
+  // ヘルパーテキスト色
+  static final Color helperText = Colors.grey.shade500;
+  
+}
+
 void main() {
   runApp(const KnittingApp());
 }
@@ -94,7 +115,7 @@ class _KnittingAppState extends State<KnittingApp> {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
-        colorSchemeSeed: Colors.teal,
+        colorSchemeSeed: AppColors.primary,
         brightness: Brightness.light,
       ),
       home: SweaterInputPage(
@@ -178,8 +199,8 @@ class _SweaterInputPageState extends State<SweaterInputPage> {
   ];
 
   final List<Map<String, dynamic>> _formats = [
-    {'id': 'PDF', 'label': 'PDF Document', 'icon': Icons.picture_as_pdf, 'color': Colors.red.shade700},
-    {'id': 'Excel', 'label': 'Excel Sheet', 'icon': Icons.table_chart, 'color': Colors.green.shade700},
+    {'id': 'PDF', 'label': 'PDF Document', 'icon': Icons.picture_as_pdf, 'color': AppColors.pdf},
+    {'id': 'Excel', 'label': 'Excel Sheet', 'icon': Icons.table_chart, 'color': AppColors.excel},
   ];
 
   @override
@@ -188,32 +209,37 @@ class _SweaterInputPageState extends State<SweaterInputPage> {
       appBar: AppBar(
         title: Text(widget.t('title'), style: const TextStyle(fontWeight: FontWeight.bold)),
         actions: [
-          Padding(
-            
-            padding: const EdgeInsets.only(right: 16.0, top: 8.0, bottom: 8.0),// 外側の余白
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12.0),// 内側の余白
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<String>(
-                  value: widget.currentLocale,
-                  icon: const Padding(
-                    padding: EdgeInsets.only(left: 4.0), // アイコンと文字の間隔
-                    child: Icon(Icons.translate, size: 16, color: Colors.teal),
-                  ),
-                  alignment: Alignment.center, // テキストを中央寄せ
-                  style: const TextStyle(
-                    color: Colors.teal, 
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13,
-                  ),
-                  items: const [
-                    DropdownMenuItem(value: 'ja', child: Text('JP')),
-                    DropdownMenuItem(value: 'en', child: Text('EN')),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.menu),
+            onSelected: (value) {
+              if (value == 'language_settings') {
+                _showLanguageDialog(); // ダイアログを開く
+              }
+              // 他の拡張機能（ログインなど）
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'language_settings',
+                child: Row(
+                  children: [
+                    Icon(Icons.translate, size: 20),
+                    SizedBox(width: 12),
+                    Text('Language / 言語'),
                   ],
-                  onChanged: widget.onLocaleChange,
                 ),
               ),
-            ),
+              const PopupMenuDivider(),
+              const PopupMenuItem(
+                value: 'account',
+                child: Row(
+                  children: [
+                    Icon(Icons.person_outline, size: 20),
+                    SizedBox(width: 12),
+                    Text('Login / Account'),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -259,6 +285,47 @@ class _SweaterInputPageState extends State<SweaterInputPage> {
   }
 
   // --- UI Components ---
+
+  void _showLanguageDialog() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        // 実際にはここが 20, 30 と増えていく
+        final languages = [
+          {'code': 'ja', 'name': '日本語', 'flag': '🇯🇵'},
+          {'code': 'en', 'name': 'English', 'flag': '🇺🇸'},
+          // {'code': 'fr', 'name': 'Français', 'flag': '🇫🇷'},
+          // {'code': 'de', 'name': 'Deutsch', 'flag': '🇩🇪'},
+          // ... どんどん追加可能
+        ];
+
+        return AlertDialog(
+          title: const Text('Select Language'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView.builder(
+              shrinkWrap: true, // 内容に合わせて高さを調整
+              itemCount: languages.length,
+              itemBuilder: (context, index) {
+                final lang = languages[index];
+                final isSelected = widget.currentLocale == lang['code'];
+                
+                return ListTile(
+                  leading: Text(lang['flag']!, style: const TextStyle(fontSize: 20)),
+                  title: Text(lang['name']!),
+                  trailing: isSelected ? const Icon(Icons.check, color: AppColors.primary) : null,
+                  onTap: () {
+                    widget.onLocaleChange(lang['code']);
+                    Navigator.pop(context);
+                  },
+                );
+              },
+            ),
+          ),
+        );
+      },
+    );
+  }
 
   Widget _buildGaugeCard() {
     // ここでは「翻訳キー」を選択する
@@ -327,8 +394,8 @@ class _SweaterInputPageState extends State<SweaterInputPage> {
             child: Container(
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: isSelected ? Colors.teal : Colors.grey.shade300, width: isSelected ? 3 : 1),
-                color: isSelected ? Colors.teal.withValues(alpha: 0.05) : Colors.transparent,
+                border: Border.all(color: isSelected ? AppColors.primary : AppColors.cardBorder, width: isSelected ? 3 : 1),
+                color: isSelected ? AppColors.primaryLight : null,
               ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -347,7 +414,7 @@ class _SweaterInputPageState extends State<SweaterInputPage> {
                     style: TextStyle(
                       fontSize: 10,
                       fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                      color: isSelected ? Colors.teal : Colors.black87,
+                      color: isSelected ? AppColors.primary : null,
                     ),
                     textAlign: TextAlign.center,
                   ),
@@ -394,9 +461,9 @@ class _SweaterInputPageState extends State<SweaterInputPage> {
           child: OutlinedButton(
             style: OutlinedButton.styleFrom(
               padding: EdgeInsets.zero,
-              backgroundColor: isSelected ? Colors.teal.withOpacity(0.1) : null,
+              backgroundColor: isSelected ? AppColors.primaryLight : null,
               side: BorderSide(
-                color: isSelected ? Colors.teal : Colors.grey.shade300,
+                color: isSelected ? AppColors.primary : AppColors.cardBorder,
                 width: isSelected ? 2 : 1,
               ),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -413,7 +480,7 @@ class _SweaterInputPageState extends State<SweaterInputPage> {
               style: TextStyle(
                 fontSize: 10,
                 fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                color: isSelected ? Colors.teal : Colors.black87,
+                color: isSelected ? AppColors.primary : null,
               ),
             ),
           ),
@@ -463,7 +530,7 @@ class _SweaterInputPageState extends State<SweaterInputPage> {
           Container(
             width: 140, // 200だと狭い画面で入力欄が圧迫されるため少し調整
             height: 140,
-            decoration: BoxDecoration(color: Colors.grey[200], borderRadius: BorderRadius.circular(8)),
+            decoration: BoxDecoration(color: Colors.grey.withValues(alpha: 0.05), borderRadius: BorderRadius.circular(8)),
             child: Icon(icon, color: Colors.grey, size: 48),
           ),
           const SizedBox(width: 16),
@@ -519,8 +586,8 @@ class _SweaterInputPageState extends State<SweaterInputPage> {
             child: Container(
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(16),
-                color: (format['color'] as Color).withOpacity(0.1),
-                border: Border.all(color: (format['color'] as Color).withOpacity(0.3)),
+                color: (format['color'] as Color).withValues(alpha: 0.1),
+                border: Border.all(color: (format['color'] as Color).withValues(alpha: 0.3)),
               ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -538,13 +605,13 @@ class _SweaterInputPageState extends State<SweaterInputPage> {
   Widget _baseCard({required String title, required Widget child}) {
     return Card(
       elevation: 0,
-      shape: RoundedRectangleBorder(side: BorderSide(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(16)),
+      shape: RoundedRectangleBorder(side: BorderSide(color: AppColors.cardBorder), borderRadius: BorderRadius.circular(16)),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.teal)),
+            Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.primary)),
             const Divider(),
             Expanded(child: child),
           ],
@@ -564,12 +631,12 @@ class _SweaterInputPageState extends State<SweaterInputPage> {
           prefixIcon: icon != null 
               ? RotatedBox(
                   quarterTurns: quarterTurns, 
-                  child: Icon(icon, size: 20, color: Colors.teal.shade700),
+                  child: Icon(icon, size: 20, color: AppColors.primaryDark),
                 ) 
               : null,
           // ここに単位を表示 (例: cm / inch)
           suffixText: suffix?.toLowerCase(), 
-          suffixStyle: TextStyle(color: Colors.grey.shade500, fontSize: 12),
+          suffixStyle: TextStyle(color: AppColors.helperText, fontSize: 12),
           isDense: true,
           border: const UnderlineInputBorder(),
         ),
@@ -587,7 +654,7 @@ class _SweaterInputPageState extends State<SweaterInputPage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('Generating $selectedFormat for ${widget.t(_sweaterType.toLowerCase())}...'),
-        backgroundColor: Colors.teal,
+        backgroundColor: AppColors.primary,
         behavior: SnackBarBehavior.floating,
       )
     );
