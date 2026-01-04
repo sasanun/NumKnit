@@ -1,16 +1,20 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
+import 'package:flutter/services.dart' show rootBundle; // rootBundleを追加
+import 'package:yaml/yaml.dart'; // YAMLパーサー
+import 'package:url_launcher/url_launcher.dart'; // URL起動用
+
+import 'package:frontend/translation.dart';
+import 'package:frontend/adProduct.dart';
 
 class AppColors {
   // ブランドカラー
   static const Color primary = Colors.teal;
-  static final Color primaryLight = Colors.teal.shade50;
-  static final Color primaryDark = Colors.teal.shade700;
-  static const Color accent = Color(0xFF00BFA5);
+  static final Color primaryLight = Colors.teal.shade100;
+  static final Color primaryDark = Colors.teal.shade800;
   
-  // 背景・カード
-  static final Color cardBorder = Colors.grey.shade300;
-  static const Color cardBg = Colors.white;
-  static final Color scaffoldBg = Colors.grey.shade50;
+  // ボーダー
+  static final Color border = Colors.grey.shade300;
   
   // 機能色
   static const Color pdf = Color(0xFFD32F2F);
@@ -21,7 +25,13 @@ class AppColors {
   
 }
 
-void main() {
+void main() async {
+  // Flutterのバインディングを初期化
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // 翻訳データをロード
+  await AppTranslations.init();
+  
   runApp(const KnittingApp());
 }
 
@@ -35,79 +45,7 @@ class KnittingApp extends StatefulWidget {
 class _KnittingAppState extends State<KnittingApp> {
   String _locale = 'ja';
 
-  final Map<String, Map<String, String>> _localizedValues = {
-    'ja': {
-      'title': 'セーターチャートジェネレーター',
-      'gauge': 'ゲージ',
-      'type': 'タイプ',
-      'body': '身頃',
-      'neck_shoulder': '襟と肩',
-      'sleeve': '袖',
-      'download': 'ダウンロード',
-      'cm': 'センチメートル',
-      'inch': 'インチ',
-      'length_of_body': '着丈',
-      'length_of_shoulder_drop': '肩下がり',
-      'length_of_ribbed_hem': '裾のゴム編み',
-      'length_of_front_neck_drop': '前襟ぐり下がり',
-      'length_of_back_neck_drop': '後襟ぐり下がり',
-      'width_of_body': '身幅',
-      'width_of_neck': '襟ぐり幅',
-      'length_of_sleeve': '袖丈',
-      'length_of_ribbed_cuff': '袖口のゴム編み',
-      'width_of_sleeve': '袖幅',
-      'width_of_cuff': '袖口幅',
-      'sts_10cm': '目数 / 10cm',
-      'rows_10cm': '段数 / 10cm',
-      'sts_4inch': '目数 / 4インチ',
-      'rows_4inch': '段数 / 4インチ',
-      'crew': 'クルーネック',
-      'v_neck': 'Vネック',
-      'high': 'ハイネック',
-      'cardigan': 'カーディガン',
-      'raglan': 'ラグラン',
-      'boat': 'ボートネック',
-      'turtle': 'タートルネック',
-      'open': 'オープンフロント',
-
-    },
-    'en': {
-      'title': 'SweaterChartGenerator',
-      'gauge': 'Gauge',
-      'type': 'Type',
-      'body': 'Body',
-      'neck_shoulder': 'Neck & Shoulder',
-      'sleeve': 'Sleeve',
-      'download': 'Download as',
-      'cm': 'cm',
-      'inch': 'inch',
-      'length_of_body': 'Body Length',
-      'length_of_shoulder_drop': 'Shoulder Drop',
-      'length_of_ribbed_hem': 'Ribbed Hem',
-      'length_of_front_neck_drop': 'Front Neck Drop',
-      'length_of_back_neck_drop': 'Back Neck Drop',
-      'width_of_body': 'Body Width',
-      'width_of_neck': 'Neck Width',
-      'length_of_sleeve': 'Sleeve Length',
-      'length_of_ribbed_cuff': 'Ribbed Cuff',
-      'width_of_sleeve': 'Sleeve Width',
-      'width_of_cuff': 'Cuff Width',
-      'sts_10cm': 'Stitches / 10cm',
-      'rows_10cm': 'Rows / 10cm',
-      'sts_4inch': 'Stitches / 4inch',
-      'rows_4inch': 'Rows / 4inch',
-      'crew': 'Crew Neck',
-      'v_neck': 'V-Neck',
-      'high': 'High Neck',
-      'cardigan': 'Cardigan',
-      'raglan': 'Raglan',
-      'boat': 'Boat Neck',
-      'turtle': 'Turtle Neck',
-      'open': 'Open Front',
-    }
-  };
-
-  String t(String key) => _localizedValues[_locale]?[key] ?? key;
+  String t(String key) => AppTranslations.values[_locale]?[key] ?? key;
 
   @override
   Widget build(BuildContext context) {
@@ -158,6 +96,39 @@ class _SweaterInputPageState extends State<SweaterInputPage> {
   String _unit = 'CM';
   String _sweaterType = 'Crew';
   String? _selectedSize; // 現在選択されているサイズ
+
+  // 広告スライド用の状態
+  late PageController _adPageController;
+  late Timer _adSlideTimer;
+  int _currentAdPageIndex = 0;
+  List<List<AdProduct>> _adProductSets = []; // 広告商品の3つのセット
+
+  @override
+  void initState() {
+    super.initState();
+    _adPageController = PageController();
+    _loadAdProducts(); // アプリ起動時に広告商品を読み込む
+  }
+
+  @override
+  void dispose() {
+    _adSlideTimer.cancel(); // タイマーのキャンセルを忘れない
+    _adPageController.dispose(); // PageControllerの破棄を忘れない
+    super.dispose();
+  }
+
+  // URLを外部ブラウザで開く
+  Future<void> _launchURL(String url) async {
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri);
+    } else {
+      // エラーメッセージを表示するなど
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not launch $url')),
+      );
+    }
+  }
 
   // 標準サイズデータ（CM単位の想定）
   final Map<String, Map<String, String>> _sizeDefaults = {
@@ -290,14 +261,7 @@ class _SweaterInputPageState extends State<SweaterInputPage> {
     showDialog(
       context: context,
       builder: (context) {
-        // 実際にはここが 20, 30 と増えていく
-        final languages = [
-          {'code': 'ja', 'name': '日本語', 'flag': '🇯🇵'},
-          {'code': 'en', 'name': 'English', 'flag': '🇺🇸'},
-          // {'code': 'fr', 'name': 'Français', 'flag': '🇫🇷'},
-          // {'code': 'de', 'name': 'Deutsch', 'flag': '🇩🇪'},
-          // ... どんどん追加可能
-        ];
+        final languages = AppTranslations.languages;
 
         return AlertDialog(
           title: const Text('Select Language'),
@@ -394,7 +358,7 @@ class _SweaterInputPageState extends State<SweaterInputPage> {
             child: Container(
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: isSelected ? AppColors.primary : AppColors.cardBorder, width: isSelected ? 3 : 1),
+                border: Border.all(color: isSelected ? AppColors.primary : AppColors.border, width: isSelected ? 3 : 1),
                 color: isSelected ? AppColors.primaryLight : null,
               ),
               child: Column(
@@ -463,7 +427,7 @@ class _SweaterInputPageState extends State<SweaterInputPage> {
               padding: EdgeInsets.zero,
               backgroundColor: isSelected ? AppColors.primaryLight : null,
               side: BorderSide(
-                color: isSelected ? AppColors.primary : AppColors.cardBorder,
+                color: isSelected ? AppColors.primary : AppColors.border,
                 width: isSelected ? 2 : 1,
               ),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -541,24 +505,181 @@ class _SweaterInputPageState extends State<SweaterInputPage> {
   }
 
   // 広告掲載用カード
+  // YAMLファイルから広告商品を読み込み、セットに分割する関数
+  Future<void> _loadAdProducts() async {
+    try {
+      print("YAML読み込み開始..."); // ←確認用
+      final String yamlString = await rootBundle.loadString('data/products.yaml');
+      print("ファイル取得成功"); // ←ここまで来なければパス間違い
+
+      final dynamic yamlData = loadYaml(yamlString);
+      print("YAMLパース成功: $yamlData");
+      if (yamlData is YamlList) {
+      List<AdProduct> allProducts = yamlData.map((item) {
+        // ここがポイント：YamlMap を Map<String, dynamic> に安全に変換する
+        final map = item as Map;
+        final convertedMap = map.map((key, value) => MapEntry(key.toString(), value));
+        return AdProduct.fromMap(convertedMap);
+      }).toList();
+
+      if (allProducts.isEmpty) return;
+
+      // 全商品をシャッフルし、8個ずつ3組に分割
+      allProducts.shuffle();
+      
+      List<List<AdProduct>> tempSets = [];
+      for (int i = 0; i < 3; i++) {
+        // リストが足りない場合の範囲外エラーを防ぐ
+        int start = i * 8;
+        if (start < allProducts.length) {
+          int end = (start + 8 > allProducts.length) ? allProducts.length : start + 8;
+          tempSets.add(allProducts.sublist(start, end));
+        }
+      }
+
+      setState(() {
+        _adProductSets = tempSets;
+      });
+
+      _startAdSlideTimer();
+    }
+  } catch (e) {
+    print('YAMLパースエラー: $e');
+  }
+      
+  }
+
+  // 自動スライドタイマー開始
+  void _startAdSlideTimer() {
+    _adSlideTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
+      if (_adProductSets.isEmpty || _adProductSets[0].isEmpty || _adProductSets.length <= 1) return; // 商品がない、または1組しかない場合はスライドしない
+
+      int nextPage = (_currentAdPageIndex + 1) % _adProductSets.length;
+      _adPageController.animateToPage(
+        nextPage,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeInOut,
+      );
+    });
+  }
   Widget _buildAdCard() {
+    // データがまだ読み込まれていないか、空の場合
+    if (_adProductSets.isEmpty || _adProductSets[0].isEmpty) {
+      return _baseCard(
+        title: widget.t('recommended_items'),
+        child: const Center(child: CircularProgressIndicator()), // ローディング表示
+      );
+    }
+
     return _baseCard(
-      title: 'Information', // 広告放送時は「Sponsor」など
-      child: Container(
-        width: double.infinity,
-        decoration: BoxDecoration(
-          color: Colors.grey.withValues(alpha: 0.05),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.grey.shade200),
-        ),
-        child: const Center(
-          child: Column(
+      title: widget.t('recommended_items'),
+      child: Column(
+        children: [
+          Expanded(
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                PageView.builder(
+                  controller: _adPageController,
+                  itemCount: _adProductSets.length,
+                  onPageChanged: (index) {
+                    setState(() {
+                      _currentAdPageIndex = index; // 現在のページインデックスを更新
+                    });
+                    _adSlideTimer.cancel(); // 手動でスライドしたらタイマーをリセット
+                    _startAdSlideTimer(); // 再度タイマーを開始
+                  },
+                  itemBuilder: (context, setIndex) {
+                    final productsInSet = _adProductSets[setIndex];
+                    // productsInSetが8個未満の場合も対応できるようにする
+                    return GridView.builder(
+                      physics: const NeverScrollableScrollPhysics(), // PageView内なのでスクロールは不要
+                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 4, // 2行4列 = 8個
+                        crossAxisSpacing: 8,
+                        mainAxisSpacing: 8,
+                        childAspectRatio: 1.0, // 正方形を維持
+                      ),
+                      itemCount: productsInSet.length,
+                      itemBuilder: (context, productIndex) {
+                        final product = productsInSet[productIndex];
+                        return _buildAdProductItem(product);
+                      },
+                    );
+                  },
+                ),
+                // 左スライドボタン
+                Positioned(
+                  left: 0,
+                  child: IconButton(
+                    icon: const Icon(Icons.arrow_back_ios, color: Colors.black54),
+                    onPressed: () {
+                      _adPageController.previousPage(duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
+                    },
+                  ),
+                ),
+                // 右スライドボタン
+                Positioned(
+                  right: 0,
+                  child: IconButton(
+                    icon: const Icon(Icons.arrow_forward_ios, color: Colors.black54),
+                    onPressed: () {
+                      _adPageController.nextPage(duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          // ページインジケーター (ドット)
+          Row(
             mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.ads_click, color: Colors.grey, size: 48),
-              SizedBox(height: 8),
-              Text('Advertisement Area', style: TextStyle(color: Colors.grey)),
-            ],
+            children: List.generate(_adProductSets.length, (index) {
+              return Container(
+                width: 8.0,
+                height: 8.0,
+                margin: const EdgeInsets.symmetric(horizontal: 4.0),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _currentAdPageIndex == index
+                      ? AppColors.primary // 選択中のドット
+                      : Colors.grey, // 未選択のドット
+                ),
+              );
+            }),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 個々の広告商品アイテムのウィジェット
+  Widget _buildAdProductItem(AdProduct product) {
+    return Tooltip(
+      message: product.name, // ホバーで商品タイトル表示
+      textStyle: const TextStyle(color: Colors.white, fontSize: 12),
+      decoration: BoxDecoration(
+        color: Colors.grey,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: InkWell(
+        onTap: () => _launchURL(product.url), // タップでAmazonへ
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(7), // Borderより少し小さくして内側に収める
+            child: Image.network(
+              product.image,
+              fit: BoxFit.cover, // 正方形に画像をフィットさせる
+              errorBuilder: (context, error, stackTrace) {
+                return const Center(child: Icon(Icons.broken_image, size: 30));
+              },
+            ),
           ),
         ),
       ),
@@ -604,8 +725,8 @@ class _SweaterInputPageState extends State<SweaterInputPage> {
   }
   Widget _baseCard({required String title, required Widget child}) {
     return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(side: BorderSide(color: AppColors.cardBorder), borderRadius: BorderRadius.circular(16)),
+      elevation: 0.1,
+      shape: RoundedRectangleBorder(side: BorderSide(color: AppColors.border), borderRadius: BorderRadius.circular(16)),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(

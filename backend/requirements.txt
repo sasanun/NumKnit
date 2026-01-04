@@ -1,0 +1,6 @@
+pydantic
+pydantic_core
+svgpathtools
+shapely
+fastapi
+openpyxl
