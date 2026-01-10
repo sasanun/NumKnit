@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
 import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle; // rootBundleを追加
 import 'package:yaml/yaml.dart'; // YAMLパーサー
 import 'package:url_launcher/url_launcher.dart'; // URL起動用
@@ -26,10 +27,17 @@ class AppColors {
 }
 
 void main() async {
+  if (kDebugMode) {
+    print('デバッグ中');
+  }
+
   // Flutterのバインディングを初期化
   WidgetsFlutterBinding.ensureInitialized();
   
   // 翻訳データをロード
+  if (kDebugMode) {
+    print('翻訳データを初期化中...');
+  }
   await AppTranslations.init();
   
   runApp(const KnittingApp());
